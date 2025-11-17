@@ -39,7 +39,7 @@ dev = [
 
 [project.scripts]
 propainter-mask = "scripts.generate_mask_from_regions:main"
-propainter-subtitle = "scripts.remove_subtitles:main"
+propainter-subtitle = "remove_subtitles:main"
 
 [tool.setuptools]
 include-package-data = true

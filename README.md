@@ -184,7 +184,7 @@ Use small `上/下` values to target areas close to the bottom (since the origin
 To automate the whole process (mask creation + inpainting) and monitor progress in one terminal, run:
 
 ```shell
-python scripts/remove_subtitles.py \
+python remove_subtitles.py \
   --video results/subtitle_1.mp4 \
   --region 0.10 0.20 0.90 0.05 \
   --output results/subtitle_1_clean
