@@ -15,7 +15,7 @@
     <a href='https://www.mmlab-ntu.com/person/ccloy/' target='_blank'>Chen Change Loy</a>
 </div>
 <div>
-    S-Lab, Nanyang Technological University&emsp; 
+    S-Lab, Nanyang Technological University&emsp;
 </div>
 
 <div>
@@ -66,16 +66,16 @@
 - [ ] Make a Colab demo.
 - [x] ~~Make a interactive Gradio demo.~~
 - [x] ~~Update features for memory-efficient inference.~~
-  
+
 ## Results
 
 #### 👨🏻‍🎨 Object Removal
 <table>
 <tr>
-   <td> 
+   <td>
       <img src="assets/object_removal1.gif">
    </td>
-   <td> 
+   <td>
       <img src="assets/object_removal2.gif">
    </td>
 </tr>
@@ -84,18 +84,18 @@
 #### 🎨 Video Completion
 <table>
 <tr>
-   <td> 
+   <td>
       <img src="assets/video_completion1.gif">
    </td>
-   <td> 
+   <td>
       <img src="assets/video_completion2.gif">
    </td>
 </tr>
 <tr>
-   <td> 
+   <td>
       <img src="assets/video_completion3.gif">
    </td>
-   <td> 
+   <td>
       <img src="assets/video_completion4.gif">
    </td>
 </tr>
@@ -146,17 +146,51 @@ weights
 ```
 
 ### 🏂 Quick test
-We provide some examples in the [`inputs`](./inputs) folder. 
+We provide some examples in the [`inputs`](./inputs) folder.
 Run the following commands to try it out:
 ```shell
 # The first example (object removal)
-python inference_propainter.py --video inputs/object_removal/bmx-trees --mask inputs/object_removal/bmx-trees_mask 
+python inference_propainter.py --video inputs/object_removal/bmx-trees --mask inputs/object_removal/bmx-trees_mask
 # The second example (video completion)
 python inference_propainter.py --video inputs/video_completion/running_car.mp4 --mask inputs/video_completion/mask_square.png --height 240 --width 432
 ```
 
 The results will be saved in the `results` folder.
 To test your own videos, please prepare the input `mp4 video` (or `split frames`) and `frame-wise mask(s)`.
+
+#### ✏️ Generate masks from normalized regions
+When you only know the subtitle or object area through normalized coordinates, use `scripts/generate_mask_from_regions.py` to create the binary masks required by the inpainting pipeline. Coordinates are defined with the left-bottom corner as the origin and expressed as `[left, top, right, bottom]`, each value ranging from 0 to 1.
+
+```shell
+# Create a single mask image for every frame in the video
+python scripts/generate_mask_from_regions.py \
+  --video /path/to/video.mp4 \
+  --region 0.05 0.20 0.95 0.12 \
+  --region 0.10 0.32 0.90 0.24 \
+  --output results/my_video_mask.png
+
+# Or generate one mask per frame (useful when your input is a folder of frames)
+python scripts/generate_mask_from_regions.py \
+  --video /path/to/frames_folder \
+  --region-json configs/subtitle_regions.json \
+  --per-frame \
+  --origin left-bottom \
+  --output results/my_video_mask_frames
+```
+
+Use small `上/下` values to target areas close to the bottom (since the origin is at the left-bottom corner, a value of `1.0` means the very top). If your annotations were exported with a top-left origin, add `--origin left-top` instead of converting the values manually. You can then pass the generated mask path (image or folder) to `inference_propainter.py` via the `--mask` argument.
+
+#### 🧹 One-command subtitle removal
+To automate the whole process (mask creation + inpainting) and monitor progress in one terminal, run:
+
+```shell
+python scripts/remove_subtitles.py \
+  --video results/subtitle_1.mp4 \
+  --region 0.10 0.20 0.90 0.05 \
+  --output results/subtitle_1_clean
+```
+
+This script reuses the normalized coordinates (left-bottom origin by default), generates a temporary mask, and launches `inference_propainter.py` so you can watch the built-in progress bars. Add extra `--region` arguments for multiple subtitle bands, or set `--origin left-top` if your annotations use the opposite origin. Use `--mask-output path.png --keep-mask` when you want to keep the generated mask for inspection.
 
 If you want to specify the video resolution for processing or avoid running out of memory, you can set the video size of `--width` and `--height`:
 ```shell
@@ -166,7 +200,7 @@ python inference_propainter.py --video inputs/video_completion/running_car.mp4 -
 
 #### 💃🏻 Interactive Demo
 
-We also provide an interactive demo for object removal, allowing users to select any object they wish to remove from a video. You can try the demo on [Hugging Face](https://huggingface.co/spaces/sczhou/ProPainter) or run it [locally](https://github.com/sczhou/ProPainter/tree/main/web-demos/hugging_face). 
+We also provide an interactive demo for object removal, allowing users to select any object they wish to remove from a video. You can try the demo on [Hugging Face](https://huggingface.co/spaces/sczhou/ProPainter) or run it [locally](https://github.com/sczhou/ProPainter/tree/main/web-demos/hugging_face).
 
 <div align="center">
   <img src="./web-demos/hugging_face/assets/demo.gif" alt="Demo GIF" style="max-width: 512px; height: auto;">
@@ -185,14 +219,14 @@ Video inpainting typically requires a significant amount of GPU memory. Here, we
    - Set `--fp16` to use fp16 (half precision) during inference.
    - Reduce the frames of sub-videos `--subvideo_length` (default 80), which effectively decouples GPU memory costs and video length.
 
-Blow shows the estimated GPU memory requirements for different sub-video lengths with fp32/fp16 precision: 
+Blow shows the estimated GPU memory requirements for different sub-video lengths with fp32/fp16 precision:
 
 | Resolution | 50 frames | 80 frames |
 | :---       | :----:    | :----:    |
 | 1280 x 720 | 28G / 19G | OOM / 25G |
 | 720 x 480  | 11G / 7G  | 13G / 8G  |
 | 640 x 480  | 10G / 6G  | 12G / 7G  |
-| 320 x 240  | 3G  / 2G  | 4G  / 3G  | 
+| 320 x 240  | 3G  / 2G  | 4G  / 3G  |
 
 
 ## Dataset preparation
@@ -234,7 +268,7 @@ datasets
       |- test_masks
          |- <video_name>
             |- 00000.png
-            |- 00001.png   
+            |- 00001.png
       |- train.json
       |- test.json
    |- youtube-vos
@@ -247,7 +281,7 @@ datasets
             |- 00000.png
             |- 00001.png
       |- train.json
-      |- test.json   
+      |- test.json
 ```
 
 ## Training
@@ -325,10 +359,10 @@ If you develop or use ProPainter in your projects, feel free to let me know. Als
 - pytorchcv: https://pypi.org/project/pytorchcv
 
 ## Contact
-If you have any questions, please feel free to reach me out at shangchenzhou@gmail.com. 
+If you have any questions, please feel free to reach me out at shangchenzhou@gmail.com.
 
 ## Acknowledgement
 
-This code is based on [E<sup>2</sup>FGVI](https://github.com/MCG-NKU/E2FGVI) and [STTN](https://github.com/researchmm/STTN). Some code are brought from [BasicVSR++](https://github.com/ckkelvinchan/BasicVSR_PlusPlus). Thanks for their awesome works. 
+This code is based on [E<sup>2</sup>FGVI](https://github.com/MCG-NKU/E2FGVI) and [STTN](https://github.com/researchmm/STTN). Some code are brought from [BasicVSR++](https://github.com/ckkelvinchan/BasicVSR_PlusPlus). Thanks for their awesome works.
 
 Special thanks to [Yihang Luo](https://github.com/Luo-Yihang) for his valuable contributions to build and maintain the Gradio demos for ProPainter.

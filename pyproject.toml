@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "propainter"
+version = "0.1.0"
+description = "ProPainter: propagation and transformer based video inpainting."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+  { name = "ProPainter Contributors" }
+]
+requires-python = ">=3.8"
+dependencies = [
+  "av",
+  "addict",
+  "einops",
+  "future",
+  "numpy",
+  "scipy",
+  "opencv-python",
+  "matplotlib",
+  "scikit-image",
+  "torch>=1.7.1",
+  "torchvision>=0.8.2",
+  "imageio-ffmpeg",
+  "pyyaml",
+  "requests",
+  "timm",
+  "yapf",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7",
+  "pre-commit>=3",
+]
+
+[project.scripts]
+propainter-mask = "scripts.generate_mask_from_regions:main"
+propainter-subtitle = "scripts.remove_subtitles:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+exclude = ["assets", "inputs", "weights", "results", "web-demos"]
