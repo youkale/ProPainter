@@ -349,8 +349,22 @@ if __name__ == '__main__':
         '--save_frames', action='store_true', help='Save output frames. Default: False')
     parser.add_argument(
         '--fp16', action='store_true', help='Use fp16 (half precision) during inference. Default: fp32 (single precision).')
+    parser.add_argument(
+        '--low_memory', action='store_true', help='Low memory mode: reduces memory usage with optimized parameters.')
 
     args = parser.parse_args()
+
+    # Apply low memory optimizations
+    if args.low_memory:
+        if args.resize_ratio == 1.0:
+            args.resize_ratio = 0.6
+        args.subvideo_length = min(args.subvideo_length, 60)
+        args.neighbor_length = min(args.neighbor_length, 8)
+        args.fp16 = True
+        print("Low memory mode enabled: resize_ratio=0.6, subvideo_length=60, neighbor_length=8, fp16=True")
+
+    if not os.path.exists(args.video):
+        raise FileNotFoundError(f"Input video or folder not found: {args.video}")
 
     # Use fp16 precision during inference to reduce running memory cost
     use_half = True if args.fp16 else False
