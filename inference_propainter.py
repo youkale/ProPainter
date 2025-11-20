@@ -308,7 +308,11 @@ if __name__ == '__main__':
         type=float,
         nargs=4,
         action='append',
-        help='Normalized region (left-bottom origin by default). Repeatable.',
+        help='Normalized region coordinates [0.0-1.0]. '
+             'Default: left-bottom origin (like math coordinates). '
+             'Order: left, top(distance from bottom), right, bottom(distance from bottom). '
+             'Example: --region 0.1 0.9 0.9 0.1 (top-left to bottom-right area). '
+             'Repeatable for multiple regions.',
     )
     parser.add_argument(
         '--region_json',
@@ -320,7 +324,9 @@ if __name__ == '__main__':
         '--region_origin',
         choices=['left-bottom', 'left-top'],
         default='left-bottom',
-        help='Coordinate origin for --region / --region_json inputs.',
+        help='Coordinate origin for --region / --region_json inputs. '
+             'left-bottom (default): Y values increase upward (0=bottom, 1=top), like math coordinates. '
+             'left-top: Y values increase downward (0=top, 1=bottom), like image coordinates.',
     )
     parser.add_argument(
         '--mask_output',
