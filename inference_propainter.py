@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 import os
+import sys
 import json
 import shutil
 import tempfile
+import subprocess
 import cv2
 import argparse
 import imageio
@@ -286,6 +288,56 @@ def print_gpu_memory_usage(device, label=""):
         print(f"GPU Memory {label}: {allocated:.2f}GB used / {total:.2f}GB total ({free:.2f}GB free)")
 
 
+def split_video_by_duration(video_path, segment_duration, output_dir):
+    """Split video into segments by duration"""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_pattern = str(output_dir / "segment_%03d.mp4")
+
+    cmd = [
+        'ffmpeg', '-i', video_path,
+        '-c', 'copy',
+        '-map', '0',
+        '-segment_time', str(segment_duration),
+        '-f', 'segment',
+        '-reset_timestamps', '1',
+        '-y',  # Overwrite without asking
+        output_pattern
+    ]
+
+    print(f"Splitting video into {segment_duration}s segments...")
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    segments = sorted(output_dir.glob("segment_*.mp4"))
+    print(f"Created {len(segments)} segments")
+    return segments
+
+
+def merge_videos_ffmpeg(video_list, output_path):
+    """Merge video segments using ffmpeg"""
+    list_file = Path(tempfile.gettempdir()) / f"video_list_{os.getpid()}.txt"
+
+    with open(list_file, 'w') as f:
+        for video in video_list:
+            f.write(f"file '{video.absolute()}'\n")
+
+    cmd = [
+        'ffmpeg', '-f', 'concat',
+        '-safe', '0',
+        '-i', str(list_file),
+        '-c', 'copy',
+        '-y',
+        str(output_path)
+    ]
+
+    print(f"\nMerging {len(video_list)} segments...")
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    list_file.unlink()
+    print(f"Merged video saved to: {output_path}")
+
+
 
 if __name__ == '__main__':
     # Set PyTorch memory management for better GPU utilization
@@ -377,6 +429,8 @@ if __name__ == '__main__':
         '--max_load_frames', type=int, default=-1, help='Maximum frames to load into GPU at once. Use lower values (e.g., 100) for extreme memory constraints.')
     parser.add_argument(
         '--cpu_cache_frames', action='store_true', help='Keep frames on CPU and transfer to GPU as needed (slower but uses much less GPU memory).')
+    parser.add_argument(
+        '--segment_duration', type=int, default=-1, help='Split video into segments of N seconds for processing (useful for long videos). -1 = no splitting.')
 
     args = parser.parse_args()
 
@@ -427,6 +481,111 @@ if __name__ == '__main__':
 
     if not os.path.exists(args.video):
         raise FileNotFoundError(f"Input video or folder not found: {args.video}")
+
+    # Check if we need to split video into segments
+    if args.segment_duration > 0 and args.video.endswith(('mp4', 'mov', 'avi', 'MP4', 'MOV', 'AVI')):
+        print(f"\n{'='*60}")
+        print(f"Segment Mode: Processing video in {args.segment_duration}s chunks")
+        print(f"{'='*60}\n")
+
+        # Create temp directory for segments
+        temp_segments_dir = Path(tempfile.mkdtemp(prefix="propainter_segments_"))
+        segments_input_dir = temp_segments_dir / "input"
+        segments_output_dir = temp_segments_dir / "output"
+
+        try:
+            # Split video
+            segments = split_video_by_duration(args.video, args.segment_duration, segments_input_dir)
+
+            # Process each segment
+            processed_videos = []
+            for i, segment in enumerate(segments, 1):
+                print(f"\n{'='*60}")
+                print(f"Processing segment {i}/{len(segments)}: {segment.name}")
+                print(f"{'='*60}\n")
+
+                # Build command to process this segment
+                cmd = [
+                    sys.executable, __file__,
+                    '-i', str(segment),
+                    '-m', args.mask,
+                    '-o', str(segments_output_dir),
+                    '--segment_duration', '-1',  # Disable segmentation for recursive call
+                ]
+
+                # Pass through all relevant arguments
+                if args.regions:
+                    for region in args.regions:
+                        cmd.extend(['--region'] + [str(v) for v in region])
+                if args.region_json:
+                    cmd.extend(['--region_json', args.region_json])
+                if args.region_origin != 'left-bottom':
+                    cmd.extend(['--region_origin', args.region_origin])
+                if args.resize_ratio != 1.0:
+                    cmd.extend(['--resize_ratio', str(args.resize_ratio)])
+                if args.width != -1:
+                    cmd.extend(['--width', str(args.width)])
+                if args.height != -1:
+                    cmd.extend(['--height', str(args.height)])
+                if args.mask_dilation != 4:
+                    cmd.extend(['--mask_dilation', str(args.mask_dilation)])
+                if args.ref_stride != 10:
+                    cmd.extend(['--ref_stride', str(args.ref_stride)])
+                if args.neighbor_length != 10:
+                    cmd.extend(['--neighbor_length', str(args.neighbor_length)])
+                if args.subvideo_length != 80:
+                    cmd.extend(['--subvideo_length', str(args.subvideo_length)])
+                if args.raft_iter != 20:
+                    cmd.extend(['--raft_iter', str(args.raft_iter)])
+                if args.save_fps != 24:
+                    cmd.extend(['--save_fps', str(args.save_fps)])
+                if args.fp16:
+                    cmd.append('--fp16')
+                if args.low_memory:
+                    cmd.append('--low_memory')
+                if args.ultra_low_memory:
+                    cmd.append('--ultra_low_memory')
+                if args.max_load_frames != -1:
+                    cmd.extend(['--max_load_frames', str(args.max_load_frames)])
+                if args.cpu_cache_frames:
+                    cmd.append('--cpu_cache_frames')
+
+                # Run processing
+                subprocess.run(cmd, check=True)
+
+                # Find the output video
+                segment_name = segment.stem
+                output_video = segments_output_dir / segment_name / "inpaint_out.mp4"
+                if not output_video.exists():
+                    raise FileNotFoundError(f"Expected output not found: {output_video}")
+                processed_videos.append(output_video)
+
+            # Merge all segments
+            print(f"\n{'='*60}")
+            print("Merging all segments...")
+            print(f"{'='*60}\n")
+
+            video_name = Path(args.video).stem
+            final_output_dir = Path(args.output) / video_name
+            final_output_dir.mkdir(parents=True, exist_ok=True)
+            final_output = final_output_dir / "inpaint_out.mp4"
+
+            merge_videos_ffmpeg(processed_videos, final_output)
+
+            print(f"\n{'='*60}")
+            print("✓ Processing complete!")
+            print(f"{'='*60}")
+            print(f"Final output: {final_output.absolute()}")
+
+            # Cleanup
+            shutil.rmtree(temp_segments_dir, ignore_errors=True)
+
+            sys.exit(0)
+
+        except Exception as e:
+            print(f"\nError during segment processing: {e}")
+            shutil.rmtree(temp_segments_dir, ignore_errors=True)
+            sys.exit(1)
 
     # Use fp16 precision during inference to reduce running memory cost
     use_half = True if args.fp16 else False
