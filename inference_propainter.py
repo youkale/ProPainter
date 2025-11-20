@@ -369,6 +369,8 @@ if __name__ == '__main__':
         '--ultra_low_memory', action='store_true', help='Ultra low memory mode: extreme optimizations for <8GB GPUs (quality tradeoff).')
     parser.add_argument(
         '--max_load_frames', type=int, default=-1, help='Maximum frames to load into GPU at once. Use lower values (e.g., 100) for extreme memory constraints.')
+    parser.add_argument(
+        '--cpu_cache_frames', action='store_true', help='Keep frames on CPU and transfer to GPU as needed (slower but uses much less GPU memory).')
 
     args = parser.parse_args()
 
@@ -381,14 +383,15 @@ if __name__ == '__main__':
         if args.ultra_low_memory:
             # Ultra aggressive settings for <8GB GPUs
             if args.resize_ratio == 1.0:
-                args.resize_ratio = 0.35
-            args.subvideo_length = min(args.subvideo_length, 25)
+                args.resize_ratio = 0.3  # Even more aggressive
+            args.subvideo_length = min(args.subvideo_length, 20)
             args.neighbor_length = min(args.neighbor_length, 4)
             args.ref_stride = max(args.ref_stride, 20)
-            args.raft_iter = min(args.raft_iter, 10)
-            args.mask_dilation = min(args.mask_dilation, 3)
+            args.raft_iter = min(args.raft_iter, 8)  # Further reduced
+            args.mask_dilation = min(args.mask_dilation, 2)
             if args.max_load_frames == -1:
-                args.max_load_frames = 100  # Limit frames loaded to GPU
+                args.max_load_frames = 80  # Further limit
+            args.cpu_cache_frames = True  # Enable CPU caching
             args.fp16 = True
             print("=== ULTRA Low Memory Mode (<8GB GPU) ===")
         else:
@@ -412,6 +415,7 @@ if __name__ == '__main__':
             print(f"  Max frames per batch: {args.max_load_frames}")
         print(f"  FP16: Enabled (memory: 50%)")
         print(f"  Model offloading: Enabled")
+        print(f"  CPU frame caching: {'Enabled' if args.cpu_cache_frames else 'Disabled'}")
         print(f"  Total memory reduction: ~{(args.resize_ratio**2 * 0.5):.1%} of original")
         print("=========================================")
 
@@ -493,10 +497,19 @@ if __name__ == '__main__':
     frames = to_tensors()(frames).unsqueeze(0) * 2 - 1
     flow_masks = to_tensors()(flow_masks).unsqueeze(0)
     masks_dilated = to_tensors()(masks_dilated).unsqueeze(0)
-    frames, flow_masks, masks_dilated = frames.to(device), flow_masks.to(device), masks_dilated.to(device)
+
+    # Keep frames on CPU if cpu_cache_frames is enabled
+    if args.cpu_cache_frames:
+        print("CPU cache mode: keeping frames on CPU, will transfer to GPU as needed")
+        frames_cpu = frames  # Keep on CPU
+        flow_masks, masks_dilated = flow_masks.to(device), masks_dilated.to(device)
+        # Create a dummy frames on GPU for size checking (will transfer chunks later)
+        frames = frames_cpu  # Will be transferred in chunks
+    else:
+        frames, flow_masks, masks_dilated = frames.to(device), flow_masks.to(device), masks_dilated.to(device)
 
     if device.type == 'cuda' and args.low_memory:
-        print_gpu_memory_usage(device, "after loading frames")
+        print_gpu_memory_usage(device, "after loading to GPU")
 
 
     ##############################################
@@ -546,15 +559,38 @@ if __name__ == '__main__':
         else:
             short_clip_len = 2
 
+        # Further reduce clip length for low memory mode
+        if args.low_memory:
+            if args.ultra_low_memory:
+                short_clip_len = max(2, short_clip_len // 3)
+            else:
+                short_clip_len = max(2, short_clip_len // 2)
+            print(f"Low memory mode: using short_clip_len={short_clip_len} for RAFT")
+
         # use fp32 for RAFT
         if frames.size(1) > short_clip_len:
             gt_flows_f_list, gt_flows_b_list = [], []
             for f in range(0, video_length, short_clip_len):
                 end_f = min(video_length, f + short_clip_len)
-                if f == 0:
-                    flows_f, flows_b = fix_raft(frames[:,f:end_f], iters=args.raft_iter)
+
+                if device.type == 'cuda' and args.low_memory:
+                    torch.cuda.empty_cache()
+                    if f == 0:
+                        print_gpu_memory_usage(device, f"RAFT chunk {f}-{end_f}")
+
+                # Transfer frames chunk to GPU if using CPU cache
+                if args.cpu_cache_frames:
+                    if f == 0:
+                        frames_chunk = frames[:,f:end_f].to(device)
+                    else:
+                        frames_chunk = frames[:,f-1:end_f].to(device)
+                    flows_f, flows_b = fix_raft(frames_chunk, iters=args.raft_iter)
+                    del frames_chunk  # Free GPU memory immediately
                 else:
-                    flows_f, flows_b = fix_raft(frames[:,f-1:end_f], iters=args.raft_iter)
+                    if f == 0:
+                        flows_f, flows_b = fix_raft(frames[:,f:end_f], iters=args.raft_iter)
+                    else:
+                        flows_f, flows_b = fix_raft(frames[:,f-1:end_f], iters=args.raft_iter)
 
                 gt_flows_f_list.append(flows_f)
                 gt_flows_b_list.append(flows_b)
@@ -564,8 +600,20 @@ if __name__ == '__main__':
             gt_flows_b = torch.cat(gt_flows_b_list, dim=1)
             gt_flows_bi = (gt_flows_f, gt_flows_b)
         else:
-            gt_flows_bi = fix_raft(frames, iters=args.raft_iter)
+            if args.cpu_cache_frames:
+                frames_gpu = frames.to(device)
+                gt_flows_bi = fix_raft(frames_gpu, iters=args.raft_iter)
+                del frames_gpu
+            else:
+                gt_flows_bi = fix_raft(frames, iters=args.raft_iter)
             torch.cuda.empty_cache()
+
+        # Now transfer frames to GPU if they were on CPU
+        if args.cpu_cache_frames:
+            print("Transferring frames to GPU after flow computation...")
+            frames = frames.to(device)
+            if device.type == 'cuda':
+                print_gpu_memory_usage(device, "after transferring frames")
 
 
         if use_half:
