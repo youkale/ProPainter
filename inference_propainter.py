@@ -279,6 +279,11 @@ def get_ref_index(mid_neighbor_id, neighbor_ids, length, ref_stride=10, ref_num=
 
 
 if __name__ == '__main__':
+    # Set PyTorch memory management for better GPU utilization
+    import os
+    if 'PYTORCH_CUDA_ALLOC_CONF' not in os.environ:
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
     # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device = get_device()
 
@@ -351,25 +356,47 @@ if __name__ == '__main__':
         '--fp16', action='store_true', help='Use fp16 (half precision) during inference. Default: fp32 (single precision).')
     parser.add_argument(
         '--low_memory', action='store_true', help='Low memory mode: reduces memory usage with optimized parameters.')
+    parser.add_argument(
+        '--ultra_low_memory', action='store_true', help='Ultra low memory mode: extreme optimizations for <8GB GPUs (quality tradeoff).')
 
     args = parser.parse_args()
 
+    # Ultra low memory mode implies low memory mode
+    if args.ultra_low_memory:
+        args.low_memory = True
+
     # Apply low memory optimizations
     if args.low_memory:
-        if args.resize_ratio == 1.0:
-            args.resize_ratio = 0.5  # More aggressive
-        args.subvideo_length = min(args.subvideo_length, 40)  # Reduced
-        args.neighbor_length = min(args.neighbor_length, 6)  # Reduced
-        args.ref_stride = max(args.ref_stride, 15)  # Fewer reference frames
-        args.fp16 = True
-        print("=== Low Memory Mode (11GB GPU) ===")
+        if args.ultra_low_memory:
+            # Ultra aggressive settings for <8GB GPUs
+            if args.resize_ratio == 1.0:
+                args.resize_ratio = 0.4
+            args.subvideo_length = min(args.subvideo_length, 30)
+            args.neighbor_length = min(args.neighbor_length, 4)
+            args.ref_stride = max(args.ref_stride, 20)
+            args.raft_iter = min(args.raft_iter, 12)
+            args.fp16 = True
+            print("=== ULTRA Low Memory Mode (<8GB GPU) ===")
+        else:
+            # Standard low memory for 11GB GPUs
+            if args.resize_ratio == 1.0:
+                args.resize_ratio = 0.5
+            args.subvideo_length = min(args.subvideo_length, 40)
+            args.neighbor_length = min(args.neighbor_length, 6)
+            args.ref_stride = max(args.ref_stride, 15)
+            args.raft_iter = min(args.raft_iter, 15)
+            args.fp16 = True
+            print("=== Low Memory Mode (11GB GPU) ===")
+
         print(f"  Resolution scale: {args.resize_ratio}x (memory: {args.resize_ratio**2:.1%})")
         print(f"  Subvideo length: {args.subvideo_length} frames")
         print(f"  Neighbor length: {args.neighbor_length} frames")
         print(f"  Reference stride: {args.ref_stride}")
+        print(f"  RAFT iterations: {args.raft_iter}")
         print(f"  FP16: Enabled (memory: 50%)")
+        print(f"  Model offloading: Enabled")
         print(f"  Total memory reduction: ~{(args.resize_ratio**2 * 0.5):.1%} of original")
-        print("==================================")
+        print("=========================================")
 
     if not os.path.exists(args.video):
         raise FileNotFoundError(f"Input video or folder not found: {args.video}")
@@ -512,6 +539,14 @@ if __name__ == '__main__':
         # Clear intermediate flow lists if they exist
         if frames.size(1) > short_clip_len:
             del gt_flows_f_list, gt_flows_b_list
+
+        # Offload RAFT model after flow computation (low memory mode)
+        if args.low_memory:
+            if device.type == 'cuda':
+                print("Offloading RAFT model to CPU...")
+                fix_raft.module.to('cpu') if hasattr(fix_raft, 'module') else None
+            del fix_raft
+
         torch.cuda.empty_cache()
 
 
@@ -547,6 +582,13 @@ if __name__ == '__main__':
 
         # Clear gt_flows after completing flow
         del gt_flows_bi
+
+        # Offload flow completion model (low memory mode)
+        if args.low_memory:
+            print("Offloading flow completion model to CPU...")
+            fix_flow_complete.to('cpu')
+            del fix_flow_complete
+
         torch.cuda.empty_cache()
 
         # ---- image propagation ----
@@ -554,7 +596,7 @@ if __name__ == '__main__':
         subvideo_length_img_prop = min(100, args.subvideo_length) # ensure a minimum of 100 frames for image propagation
         if video_length > subvideo_length_img_prop:
             updated_frames, updated_masks = [], []
-            pad_len = 10
+            pad_len = 5 if args.low_memory else 10  # Reduce padding in low memory mode
             for f in range(0, video_length, subvideo_length_img_prop):
                 s_f = max(0, f - pad_len)
                 e_f = min(video_length, f + subvideo_length_img_prop + pad_len)

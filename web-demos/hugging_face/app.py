@@ -24,14 +24,14 @@ def parse_augment():
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', type=str, default=None)
     parser.add_argument('--sam_model_type', type=str, default="vit_h")
-    parser.add_argument('--port', type=int, default=8000, help="only useful when running gradio applications")  
+    parser.add_argument('--port', type=int, default=8000, help="only useful when running gradio applications")
     parser.add_argument('--mask_save', default=False)
     args = parser.parse_args()
-    
+
     if not args.device:
         args.device = str(get_device())
 
-    return args 
+    return args
 
 # convert points input to prompt state
 def get_prompt(click_state, click_input):
@@ -57,7 +57,7 @@ def get_frames_from_video(video_input, video_state):
     Args:
         video_path:str
         timestamp:float64
-    Return 
+    Return
         [[0:nearest_frame], [nearest_frame:], nearest_frame]
     """
     video_path = video_input
@@ -80,7 +80,7 @@ def get_frames_from_video(video_input, video_state):
                 break
     except (OSError, TypeError, ValueError, KeyError, SyntaxError) as e:
         print("read_frame_source:{} error. {}\n".format(video_path, str(e)))
-    image_size = (frames[0].shape[0],frames[0].shape[1]) 
+    image_size = (frames[0].shape[0],frames[0].shape[1])
     # initialize video_state
     video_state = {
         "user_name": user_name,
@@ -93,7 +93,7 @@ def get_frames_from_video(video_input, video_state):
         "fps": fps
         }
     video_info = "Video Name: {},\nFPS: {},\nTotal Frames: {},\nImage Size:{}".format(video_state["video_name"], round(video_state["fps"], 0), len(frames), image_size)
-    model.samcontroler.sam_controler.reset_image() 
+    model.samcontroler.sam_controler.reset_image()
     model.samcontroler.sam_controler.set_image(video_state["origin_images"][0])
     return video_state, video_info, video_state["origin_images"][0], gr.update(visible=True, maximum=len(frames), value=1), gr.update(visible=True, maximum=len(frames), value=len(frames)), \
                         gr.update(visible=True), gr.update(visible=True), \
@@ -141,14 +141,14 @@ def sam_refine(video_state, point_prompt, click_state, interactive_state, evt:gr
     else:
         coordinate = "[[{},{},0]]".format(evt.index[0], evt.index[1])
         interactive_state["negative_click_times"] += 1
-    
+
     # prompt for sam model
     model.samcontroler.sam_controler.reset_image()
     model.samcontroler.sam_controler.set_image(video_state["origin_images"][video_state["select_frame_number"]])
     prompt = get_prompt(click_state=click_state, click_input=coordinate)
 
-    mask, logit, painted_image = model.first_frame_click( 
-                                                      image=video_state["origin_images"][video_state["select_frame_number"]], 
+    mask, logit, painted_image = model.first_frame_click(
+                                                      image=video_state["origin_images"][video_state["select_frame_number"]],
                                                       points=np.array(prompt["input_point"]),
                                                       labels=np.array(prompt["input_label"]),
                                                       multimask=prompt["multimask_output"],
@@ -195,7 +195,7 @@ def show_mask(video_state, interactive_state, mask_dropdown):
         mask_number = int(mask_dropdown[i].split("_")[1]) - 1
         mask = interactive_state["multi_mask"]["masks"][mask_number]
         select_frame = mask_painter(select_frame, mask.astype('uint8'), mask_color=mask_number+2)
-    
+
     operation_log = [("",""), ("Added masks {}. If you want to do the inpainting with current masks, please go to step3, and click the Tracking button first and then Inpainting button.".format(mask_dropdown),"Normal")]
     return select_frame, operation_log, operation_log
 
@@ -214,10 +214,10 @@ def vos_tracking_video(video_state, interactive_state, mask_dropdown):
         mask_dropdown.sort()
         template_mask = interactive_state["multi_mask"]["masks"][int(mask_dropdown[0].split("_")[1]) - 1] * (int(mask_dropdown[0].split("_")[1]))
         for i in range(1,len(mask_dropdown)):
-            mask_number = int(mask_dropdown[i].split("_")[1]) - 1 
+            mask_number = int(mask_dropdown[i].split("_")[1]) - 1
             template_mask = np.clip(template_mask+interactive_state["multi_mask"]["masks"][mask_number]*(mask_number+1), 0, mask_number+1)
         video_state["masks"][video_state["select_frame_number"]]= template_mask
-    else:      
+    else:
         template_mask = video_state["masks"][video_state["select_frame_number"]]
     fps = video_state["fps"]
 
@@ -230,7 +230,7 @@ def vos_tracking_video(video_state, interactive_state, mask_dropdown):
     # clear GPU memory
     model.cutie.clear_memory()
 
-    if interactive_state["track_end_number"]: 
+    if interactive_state["track_end_number"]:
         video_state["masks"][video_state["select_frame_number"]:interactive_state["track_end_number"]] = masks
         video_state["logits"][video_state["select_frame_number"]:interactive_state["track_end_number"]] = logits
         video_state["painted_images"][video_state["select_frame_number"]:interactive_state["track_end_number"]] = painted_images
@@ -241,8 +241,8 @@ def vos_tracking_video(video_state, interactive_state, mask_dropdown):
 
     video_output = generate_video_from_frames(video_state["painted_images"], output_path="./result/track/{}".format(video_state["video_name"]), fps=fps) # import video_input to name the output video
     interactive_state["inference_times"] += 1
-    
-    print("For generating this tracking result, inference times: {}, click times: {}, positive: {}, negative: {}".format(interactive_state["inference_times"], 
+
+    print("For generating this tracking result, inference times: {}, click times: {}, positive: {}, negative: {}".format(interactive_state["inference_times"],
                                                                                                                                            interactive_state["positive_click_times"]+interactive_state["negative_click_times"],
                                                                                                                                            interactive_state["positive_click_times"],
                                                                                                                                         interactive_state["negative_click_times"]))
@@ -260,7 +260,7 @@ def vos_tracking_video(video_state, interactive_state, mask_dropdown):
     #### shanggao code for mask save
     return video_output, video_state, interactive_state, operation_log, operation_log
 
-# inpaint 
+# inpaint
 def inpaint_video(video_state, resize_ratio_number, dilate_radius_number, raft_iter_number, subvideo_length_number, neighbor_length_number, ref_stride_number, mask_dropdown):
     operation_log = [("",""), ("Inpainting finished!","Normal")]
 
@@ -279,15 +279,15 @@ def inpaint_video(video_state, resize_ratio_number, dilate_radius_number, raft_i
         if i in inpaint_mask_numbers:
             continue
         inpaint_masks[inpaint_masks==i] = 0
-    
+
     # inpaint for videos
-    inpainted_frames = model.baseinpainter.inpaint(frames, 
-                                                   inpaint_masks, 
-                                                   ratio=resize_ratio_number, 
+    inpainted_frames = model.baseinpainter.inpaint(frames,
+                                                   inpaint_masks,
+                                                   ratio=resize_ratio_number,
                                                    dilate_radius=dilate_radius_number,
                                                    raft_iter=raft_iter_number,
-                                                   subvideo_length=subvideo_length_number, 
-                                                   neighbor_length=neighbor_length_number, 
+                                                   subvideo_length=subvideo_length_number,
+                                                   neighbor_length=neighbor_length_number,
                                                    ref_stride=ref_stride_number)   # numpy array, T, H, W, 3
 
     video_output = generate_video_from_frames(inpainted_frames, output_path="./result/inpaint/{}".format(video_state["video_name"]), fps=fps) # import video_input to name the output video
@@ -298,7 +298,7 @@ def inpaint_video(video_state, resize_ratio_number, dilate_radius_number, raft_i
 def generate_video_from_frames(frames, output_path, fps=30):
     """
     Generates a video from a list of frames.
-    
+
     Args:
         frames (list of numpy arrays): The frames to include in the video.
         output_path (str): The path to save the generated video.
@@ -369,7 +369,7 @@ description = r"""
 🤗 Try to drop your video, add the masks and get the the inpainting results!<br>
 """
 article = r"""
-If ProPainter is helpful, please help to ⭐ the <a href='https://github.com/sczhou/ProPainter' target='_blank'>Github Repo</a>. Thanks! 
+If ProPainter is helpful, please help to ⭐ the <a href='https://github.com/sczhou/ProPainter' target='_blank'>Github Repo</a>. Thanks!
 [![GitHub Stars](https://img.shields.io/github/stars/sczhou/ProPainter?style=social)](https://github.com/sczhou/ProPainter)
 
 ---
@@ -388,7 +388,7 @@ If our work is useful for your research, please consider citing:
 
 📋 **License**
 <br>
-This project is licensed under <a rel="license" href="https://github.com/sczhou/CodeFormer/blob/master/LICENSE">S-Lab License 1.0</a>. 
+This project is licensed under <a rel="license" href="https://github.com/sczhou/CodeFormer/blob/master/LICENSE">S-Lab License 1.0</a>.
 Redistribution and use for non-commercial purposes should follow this license.
 
 📧 **Contact**
@@ -396,7 +396,7 @@ Redistribution and use for non-commercial purposes should follow this license.
 If you have any questions, please feel free to reach me out at <b>shangchenzhou@gmail.com</b>.
 <div>
     🤗 Find Me:
-    <a href="https://twitter.com/ShangchenZhou"><img style="margin-top:0.5em; margin-bottom:0.5em" src="https://img.shields.io/twitter/follow/ShangchenZhou?label=%40ShangchenZhou&style=social" alt="Twitter Follow"></a> 
+    <a href="https://twitter.com/ShangchenZhou"><img style="margin-top:0.5em; margin-bottom:0.5em" src="https://img.shields.io/twitter/follow/ShangchenZhou?label=%40ShangchenZhou&style=social" alt="Twitter Follow"></a>
     <a href="https://github.com/sczhou"><img style="margin-top:0.5em; margin-bottom:2em" src="https://img.shields.io/github/followers/sczhou?style=social" alt="Github Follow"></a>
 </div>
 
@@ -471,7 +471,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
                                             value=8,)
 
                     subvideo_length_number = gr.Slider(label='Length of sub-video for long video inference.',
-                                            minimum=40,
+                                            minimum=10,
                                             maximum=200,
                                             step=1,
                                             value=80,)
@@ -481,26 +481,26 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
                                             maximum=20,
                                             step=1,
                                             value=10,)
-                    
+
                     ref_stride_number = gr.Slider(label='Stride of global reference frames.',
                                             minimum=5,
                                             maximum=20,
                                             step=1,
                                             value=10,)
-  
+
     with gr.Column():
         # input video
         gr.Markdown("## Step1: Upload video")
         with gr.Row(equal_height=True):
-            with gr.Column(scale=2):      
+            with gr.Column(scale=2):
                 video_input = gr.Video(elem_classes="video")
-                extract_frames_button = gr.Button(value="Get video info", interactive=True, variant="primary") 
+                extract_frames_button = gr.Button(value="Get video info", interactive=True, variant="primary")
             with gr.Column(scale=2):
                 run_status = gr.HighlightedText(value=[("",""), ("Try to upload your video and click the Get video info button to get started!", "Normal")],
                                                 color_map={"Normal": "green", "Error": "red", "Clear clicks": "gray", "Add mask": "green", "Remove mask": "red"})
                 video_info = gr.Textbox(label="Video Info")
-                
-        
+
+
         # add masks
         step2_title = gr.Markdown("---\n## Step2: Add masks", visible=False)
         with gr.Row(equal_height=True):
@@ -525,7 +525,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
                         min_width=100,
                         scale=1)
                 mask_dropdown = gr.Dropdown(multiselect=True, value=[], label="Mask selection", info=".", visible=False)
-            
+
         # output video
         step3_title = gr.Markdown("---\n## Step3: Track masks and get the inpainting result", visible=False)
         with gr.Row(equal_height=True):
@@ -536,7 +536,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
                 inpaiting_video_output = gr.Video(visible=False, elem_classes="video")
                 inpaint_video_predict_button = gr.Button(value="2. Inpainting", visible=False, elem_classes="margin_center")
 
-    # first step: get the video information 
+    # first step: get the video information
     extract_frames_button.click(
         fn=get_frames_from_video,
         inputs=[
@@ -545,16 +545,16 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
         outputs=[video_state, video_info, template_frame,
                  image_selection_slider, track_pause_number_slider,point_prompt, clear_button_click, Add_mask_button, template_frame,
                  tracking_video_predict_button, tracking_video_output, inpaiting_video_output, remove_mask_button, inpaint_video_predict_button, step2_title, step3_title,mask_dropdown, run_status, run_status2]
-    )   
+    )
 
     # second step: select images from slider
-    image_selection_slider.release(fn=select_template, 
-                                   inputs=[image_selection_slider, video_state, interactive_state], 
+    image_selection_slider.release(fn=select_template,
+                                   inputs=[image_selection_slider, video_state, interactive_state],
                                    outputs=[template_frame, video_state, interactive_state, run_status, run_status2], api_name="select_image")
-    track_pause_number_slider.release(fn=get_end_number, 
-                                   inputs=[track_pause_number_slider, video_state, interactive_state], 
+    track_pause_number_slider.release(fn=get_end_number,
+                                   inputs=[track_pause_number_slider, video_state, interactive_state],
                                    outputs=[template_frame, interactive_state, run_status, run_status2], api_name="end_image")
-    
+
     # click select image to get mask using sam
     template_frame.select(
         fn=sam_refine,
@@ -595,38 +595,38 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
         inputs=[video_state, interactive_state, mask_dropdown],
         outputs=[template_frame, run_status, run_status2]
     )
-    
+
     # clear input
     video_input.change(
         fn=restart,
         inputs=[],
-        outputs=[ 
+        outputs=[
             video_state,
             interactive_state,
             click_state,
             tracking_video_output, inpaiting_video_output,
             template_frame,
-            tracking_video_predict_button, image_selection_slider , track_pause_number_slider,point_prompt, clear_button_click, 
+            tracking_video_predict_button, image_selection_slider , track_pause_number_slider,point_prompt, clear_button_click,
             Add_mask_button, template_frame, tracking_video_predict_button, tracking_video_output, inpaiting_video_output, remove_mask_button,inpaint_video_predict_button, step2_title, step3_title, mask_dropdown, video_info, run_status, run_status2
         ],
         queue=False,
         show_progress=False)
-    
+
     video_input.clear(
         fn=restart,
         inputs=[],
-        outputs=[ 
+        outputs=[
             video_state,
             interactive_state,
             click_state,
             tracking_video_output, inpaiting_video_output,
             template_frame,
-            tracking_video_predict_button, image_selection_slider , track_pause_number_slider,point_prompt, clear_button_click, 
+            tracking_video_predict_button, image_selection_slider , track_pause_number_slider,point_prompt, clear_button_click,
             Add_mask_button, template_frame, tracking_video_predict_button, tracking_video_output, inpaiting_video_output, remove_mask_button,inpaint_video_predict_button, step2_title, step3_title, mask_dropdown, video_info, run_status, run_status2
         ],
         queue=False,
         show_progress=False)
-    
+
     # points clear
     clear_button_click.click(
         fn = clear_click,
