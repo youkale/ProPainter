@@ -277,6 +277,15 @@ def get_ref_index(mid_neighbor_id, neighbor_ids, length, ref_stride=10, ref_num=
     return ref_index
 
 
+def print_gpu_memory_usage(device, label=""):
+    if device.type == 'cuda':
+        allocated = torch.cuda.memory_allocated(device) / 1024**3
+        reserved = torch.cuda.memory_reserved(device) / 1024**3
+        total = torch.cuda.get_device_properties(device).total_memory / 1024**3
+        free = total - allocated
+        print(f"GPU Memory {label}: {allocated:.2f}GB used / {total:.2f}GB total ({free:.2f}GB free)")
+
+
 
 if __name__ == '__main__':
     # Set PyTorch memory management for better GPU utilization
@@ -358,6 +367,8 @@ if __name__ == '__main__':
         '--low_memory', action='store_true', help='Low memory mode: reduces memory usage with optimized parameters.')
     parser.add_argument(
         '--ultra_low_memory', action='store_true', help='Ultra low memory mode: extreme optimizations for <8GB GPUs (quality tradeoff).')
+    parser.add_argument(
+        '--max_load_frames', type=int, default=-1, help='Maximum frames to load into GPU at once. Use lower values (e.g., 100) for extreme memory constraints.')
 
     args = parser.parse_args()
 
@@ -370,11 +381,14 @@ if __name__ == '__main__':
         if args.ultra_low_memory:
             # Ultra aggressive settings for <8GB GPUs
             if args.resize_ratio == 1.0:
-                args.resize_ratio = 0.4
-            args.subvideo_length = min(args.subvideo_length, 30)
+                args.resize_ratio = 0.35
+            args.subvideo_length = min(args.subvideo_length, 25)
             args.neighbor_length = min(args.neighbor_length, 4)
             args.ref_stride = max(args.ref_stride, 20)
-            args.raft_iter = min(args.raft_iter, 12)
+            args.raft_iter = min(args.raft_iter, 10)
+            args.mask_dilation = min(args.mask_dilation, 3)
+            if args.max_load_frames == -1:
+                args.max_load_frames = 100  # Limit frames loaded to GPU
             args.fp16 = True
             print("=== ULTRA Low Memory Mode (<8GB GPU) ===")
         else:
@@ -393,6 +407,9 @@ if __name__ == '__main__':
         print(f"  Neighbor length: {args.neighbor_length} frames")
         print(f"  Reference stride: {args.ref_stride}")
         print(f"  RAFT iterations: {args.raft_iter}")
+        print(f"  Mask dilation: {args.mask_dilation}")
+        if args.max_load_frames > 0:
+            print(f"  Max frames per batch: {args.max_load_frames}")
         print(f"  FP16: Enabled (memory: 50%)")
         print(f"  Model offloading: Enabled")
         print(f"  Total memory reduction: ~{(args.resize_ratio**2 * 0.5):.1%} of original")
@@ -407,6 +424,21 @@ if __name__ == '__main__':
         use_half = False
 
     frames, fps, size, video_name = read_frame_from_videos(args.video)
+
+    # Check video length and warn for low memory mode
+    video_length = len(frames)
+    if args.max_load_frames > 0 and video_length > args.max_load_frames:
+        print(f"\n⚠️  WARNING: Video has {video_length} frames")
+        print(f"   Processing only first {args.max_load_frames} frames due to memory constraints")
+        print(f"   To process full video: split into chunks or increase --max_load_frames")
+        print(f"   Truncating to {args.max_load_frames} frames...\n")
+        frames = frames[:args.max_load_frames]
+        video_length = len(frames)
+    elif args.low_memory and video_length > 150:
+        print(f"\n⚠️  WARNING: Video has {video_length} frames")
+        print(f"   Recommended: Use --max_load_frames 100 or split video")
+        print()
+
     auto_mask_temp_dir = None
     if args.regions or args.region_json:
         temp_dir, mask_path = maybe_generate_mask_from_regions(args, video_name, size[0], size[1])
@@ -455,11 +487,16 @@ if __name__ == '__main__':
     # Clear cache before loading to GPU
     if device.type == 'cuda':
         torch.cuda.empty_cache()
+        if args.low_memory:
+            print_gpu_memory_usage(device, "before loading frames")
 
     frames = to_tensors()(frames).unsqueeze(0) * 2 - 1
     flow_masks = to_tensors()(flow_masks).unsqueeze(0)
     masks_dilated = to_tensors()(masks_dilated).unsqueeze(0)
     frames, flow_masks, masks_dilated = frames.to(device), flow_masks.to(device), masks_dilated.to(device)
+
+    if device.type == 'cuda' and args.low_memory:
+        print_gpu_memory_usage(device, "after loading frames")
 
 
     ##############################################
@@ -486,6 +523,9 @@ if __name__ == '__main__':
     model = InpaintGenerator(model_path=ckpt_path).to(device)
     model.eval()
 
+    if device.type == 'cuda' and args.low_memory:
+        print_gpu_memory_usage(device, "after loading all models")
+
 
     ##############################################
     # ProPainter inference
@@ -494,9 +534,7 @@ if __name__ == '__main__':
     print(f'\nProcessing: {video_name} [{video_length} frames]...')
 
     if device.type == 'cuda':
-        allocated = torch.cuda.memory_allocated(device) / 1024**3
-        reserved = torch.cuda.memory_reserved(device) / 1024**3
-        print(f'GPU Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved')
+        print_gpu_memory_usage(device, "before inference")
     with torch.no_grad():
         # ---- compute flow ----
         if frames.size(-1) <= 640:
